@@ -5,7 +5,7 @@ import { codeReview, type ReviewPR } from '../../api/codeReview';
 import { ApiError } from '../../api/hosted';
 
 vi.mock('../../api/codeReview', () => ({ codeReview: { launch: vi.fn() } }));
-afterEach(() => { cleanup(); vi.resetAllMocks(); });
+afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
 const pr: ReviewPR = {
   id: 'pr-1', profile: 'example', task_id: 'pr-1', repository: 'alice/example', number: 1,
   title: 'Synthetic PR', url: 'https://example.com', state: 'open', draft: 0, head: 'head', base: 'base',
@@ -14,6 +14,37 @@ const pr: ReviewPR = {
   review_action: { enabled: true, state: 'ready', reason: '', review_mode: 'manual' },
 };
 const pending = { id: 'request-1', version_id: 'version-1', state: 'pending', reason: '' };
+
+it('launches over HTTP without native randomUUID and reuses the key after a lost response', async () => {
+  vi.stubGlobal('crypto', { getRandomValues: crypto.getRandomValues.bind(crypto) });
+  vi.mocked(codeReview.launch).mockRejectedValueOnce(new Error('Connection lost')).mockResolvedValueOnce({ request: pending });
+  render(<ReviewLaunch pr={pr} onChange={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button'));
+  await screen.findByRole('alert');
+  expect(screen.getByRole('button')).toBeEnabled();
+  fireEvent.click(screen.getByRole('button'));
+  expect(await screen.findByRole('button', { name: 'В очереди' })).toBeDisabled();
+  const calls = vi.mocked(codeReview.launch).mock.calls;
+  expect(calls).toHaveLength(2);
+  expect(calls[0]).toEqual(['pr-1', 'version-1', expect.stringMatching(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/)]);
+  expect(calls[1][2]).toBe(calls[0][2]);
+});
+
+it('shows a preparation error and allows another click without sending a request', async () => {
+  const getRandomValues = crypto.getRandomValues.bind(crypto);
+  vi.stubGlobal('crypto', {
+    getRandomValues: vi.fn().mockImplementationOnce(() => { throw new Error('Random source unavailable'); }).mockImplementation(getRandomValues),
+  });
+  vi.mocked(codeReview.launch).mockResolvedValue({ request: pending });
+  render(<ReviewLaunch pr={pr} onChange={vi.fn()} />);
+  fireEvent.click(screen.getByRole('button'));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Random source unavailable');
+  expect(screen.getByRole('button')).toBeEnabled();
+  expect(codeReview.launch).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button'));
+  await screen.findByRole('button', { name: 'В очереди' });
+  expect(codeReview.launch).toHaveBeenCalledOnce();
+});
 
 it('one click sends the exact version; concurrent clicks and a delayed refresh cannot send another', async () => {
   let finish!: (value: { request: typeof pending }) => void;

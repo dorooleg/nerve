@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { codeReview, type ReviewPR, type ManualReviewRequest } from '../../api/codeReview';
 import { ApiError } from '../../api/hosted';
+import { randomUUID } from '../../utils/uuid';
 
 /** Mount keyed by PR/version so an in-flight click cannot authorize new input. */
 export function ReviewLaunch({ pr, onChange }: { pr: ReviewPR; onChange: () => void }) {
@@ -19,9 +20,9 @@ export function ReviewLaunch({ pr, onChange }: { pr: ReviewPR; onChange: () => v
     busy.current = true;
     setSending(true);
     setError('');
-    key.current ||= crypto.randomUUID();
-    previousRequest.current = action?.last_request?.id ?? '';
     try {
+      key.current ||= randomUUID();
+      previousRequest.current = action?.last_request?.id ?? '';
       const result = await codeReview.launch(pr.id, pr.current_version, key.current);
       setAccepted(result.request);
       key.current = '';
